@@ -1,8 +1,6 @@
 use clap::{Parser};
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, BufWriter, Write};
 
 #[derive(Parser, Debug)]
 #[command(name = "Line Distributor")]
@@ -16,17 +14,12 @@ struct Args {
     #[arg(long)]
     input: Option<String>,
 
-    /// Template for output file names (default: output{}.txt)
-    #[arg(long, default_value = "output{}.txt")]
-    output_template: String,
-
     /// Number of contiguous lines per chunk (default: 256)
     #[arg(long, default_value_t = 256)]
     chunk_size: usize,
 }
 
 fn main() -> io::Result<()> {
-    // Parse the command-line arguments using clap's derive feature
     let args = Args::parse();
     let num_outputs = args.output.len();
 
@@ -39,17 +32,15 @@ fn main() -> io::Result<()> {
         None => Box::new(io::BufReader::new(io::stdin())),
     };
 
-    // Generate output file names based on the template
-    let mut output_writers: Vec<GzEncoder<File>> = args.output.into_iter().map(|output_file| {
+    let mut output_writers: Vec<BufWriter<File>> = args.output.into_iter().map(|output_file| {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(output_file).unwrap();
-        let encoder = GzEncoder::new(file, Compression::default());
-        encoder
+        let writer = BufWriter::new(file);
+        writer
     }).collect();
 
-    // Process the input (from stdin or file) line by line
     let mut buffer: Vec<String> = Vec::new();
     let mut output_index = 0;
 
@@ -61,7 +52,7 @@ fn main() -> io::Result<()> {
         if buffer.len() == args.chunk_size {
             let output_writer = &mut output_writers[output_index];
             for buffered_line in buffer.drain(..) {
-                writeln!(output_writer, "{}", buffered_line)?;
+                writeln!(output_writer, "{}", buffered_line).expect("Failed to write to output file");
             }
             // Move to the next output file in round-robin fashion
             output_index = (output_index + 1) % num_outputs;
