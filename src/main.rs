@@ -9,26 +9,26 @@ use std::io::{self, BufRead, Write};
 #[command(version = "1.0")]
 #[command(about = "Distributes chunks of lines from an input file or stdin to multiple output files")]
 struct Args {
+    /// Paths to output files
+    output: Vec<String>,
+
     /// Path to the input file (default: stdin)
     #[arg(long)]
     input: Option<String>,
-
-    /// Number of output files to generate (default: 4)
-    #[arg(long, default_value_t = 4)]
-    num_output_files: usize,
 
     /// Template for output file names (default: output{}.txt)
     #[arg(long, default_value = "output{}.txt")]
     output_template: String,
 
-    /// Number of contiguous lines per chunk (default: 1)
-    #[arg(long, default_value_t = 1)]
+    /// Number of contiguous lines per chunk (default: 256)
+    #[arg(long, default_value_t = 256)]
     chunk_size: usize,
 }
 
 fn main() -> io::Result<()> {
     // Parse the command-line arguments using clap's derive feature
     let args = Args::parse();
+    let num_outputs = args.output.len();
 
     // Determine if input is from stdin or a file
     let reader: Box<dyn BufRead> = match &args.input {
@@ -40,16 +40,14 @@ fn main() -> io::Result<()> {
     };
 
     // Generate output file names based on the template
-    let mut output_files: Vec<GzEncoder<File>> = Vec::new();
-    for i in 1..=args.num_output_files {
-        let output_filename = args.output_template.replace("{}", &i.to_string());
+    let mut output_writers: Vec<GzEncoder<File>> = args.output.into_iter().map(|output_file| {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(output_filename)?;
+            .open(output_file).unwrap();
         let encoder = GzEncoder::new(file, Compression::default());
-        output_files.push(encoder);
-    }
+        encoder
+    }).collect();
 
     // Process the input (from stdin or file) line by line
     let mut buffer: Vec<String> = Vec::new();
@@ -61,20 +59,20 @@ fn main() -> io::Result<()> {
 
         // If the buffer has reached the chunk size, write the chunk to the current output file
         if buffer.len() == args.chunk_size {
-            let output_file = &mut output_files[output_index];
+            let output_writer = &mut output_writers[output_index];
             for buffered_line in buffer.drain(..) {
-                writeln!(output_file, "{}", buffered_line)?;
+                writeln!(output_writer, "{}", buffered_line)?;
             }
             // Move to the next output file in round-robin fashion
-            output_index = (output_index + 1) % args.num_output_files;
+            output_index = (output_index + 1) % num_outputs;
         }
     }
 
     // If there are any remaining lines in the buffer, write them to the current output file
     if !buffer.is_empty() {
-        let output_file = &mut output_files[output_index];
+        let output_writer = &mut output_writers[output_index];
         for buffered_line in buffer {
-            writeln!(output_file, "{}", buffered_line)?;
+            writeln!(output_writer, "{}", buffered_line)?;
         }
     }
 
